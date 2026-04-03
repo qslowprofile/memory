@@ -1,0 +1,45 @@
+version: "adaptr-v1"
+
+source_kinds:
+  memory:
+    default_bucket: "memory.working"
+    buckets:
+      - "memory.profile"
+      - "memory.preferences"
+      - "memory.events"
+      - "memory.agent_skill"
+      - "memory.working"
+  knowledge:
+    default_bucket: "knowledge.facts"
+    buckets:
+      - "knowledge.facts"
+      - "knowledge.procedures"
+      - "knowledge.references"
+
+bucket_to_path:
+  memory.profile: "viking/user/memories/profile.jsonl"
+  memory.preferences: "viking/user/memories/preferences.jsonl"
+  memory.events: "viking/user/memories/events.jsonl"
+  memory.agent_skill: "viking/agent/skills/buffer.jsonl"
+  memory.working: "viking/session/working/buffer.jsonl"
+  knowledge.facts: "viking/user/knowledge/facts.jsonl"
+  knowledge.procedures: "viking/user/knowledge/procedures.jsonl"
+  knowledge.references: "viking/user/knowledge/references.jsonl"
+
+graph_index:
+  entities: "viking/user/memories/entities.jsonl"
+  relations: "viking/user/memories/relations.jsonl"
+  relation_decisions: "viking/user/memories/relation_decisions.jsonl"
+
+layer_index:
+  l0: "layers/l0_abstract.json"
+  l1: "layers/l1_overview.jsonl"
+  l2: "layers/l2_records.jsonl"
+  retrieval_hints: "layers/retrieval-hints.json"
+
+state_files:
+  record_hashes: "state/record_hashes.txt"
+  processed_files: "state/processed_files.json"
+
+archive:
+  records: "viking/archive/records.jsonl"
