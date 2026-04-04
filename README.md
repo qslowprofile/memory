@@ -1,4 +1,4 @@
-# OpenClaw Memory & Knowledge 架构重构工具使用指南
+<img width="4518" height="522" alt="adaptr_architecture" src="https://github.com/user-attachments/assets/a4c05198-3830-4932-bc3d-c4d2dc099c38" /># OpenClaw Memory & Knowledge 架构重构工具使用指南
 ## 写在前面：你有这个问题吗？
 
 用 OpenClaw 一段时间后，工作区通常会长这样：
@@ -97,6 +97,8 @@ OpenClaw 会自动读取包内的 `INSTALL.md` 并执行安装，整个过程 30
 ---
 
 ## 二、重构后的架构全景
+<img width="18825" height="2175" alt="adaptr_architecture (1)" src="https://github.com/user-attachments/assets/53ae3282-f32e-4554-9faf-3044e5e4deff" />
+
 安装后，你的 `memory/` 下会多出一个隐藏目录 `.adaptr-v1/`，这是重构后的数据落地处：
 
 ```
