@@ -97,7 +97,7 @@ OpenClaw 会自动读取包内的 `INSTALL.md` 并执行安装，整个过程 30
 ---
 
 ## 二、重构后的架构全景
-![Uploading adaptr_architecture.png…]()
+<img width="4518" height="522" alt="adaptr_architecture" src="https://github.com/user-attachments/assets/a6e36c8e-4b94-4d23-9780-e16a8cc08f6c" />
 
 安装后，你的 `memory/` 下会多出一个隐藏目录 `.adaptr-v1/`，这是重构后的数据落地处：
 
