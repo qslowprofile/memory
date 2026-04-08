@@ -1,0 +1,3 @@
+# 本项目无 pip 第三方依赖，默认仅使用 Python 标准库。
+# 运行时依赖：OpenClaw CLI（用于 `openclaw memory search` 检索增强去重）。
+# 保留 requirements.txt 仅用于部署工具链显式识别“无 pip 依赖”。
