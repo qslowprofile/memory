@@ -1,4 +1,6 @@
 # OpenClaw Memory & Knowledge 架构重构工具使用指南
+---
+
 ## 写在前面：你有这个问题吗？
 
 用 OpenClaw 一段时间后，工作区通常会长这样：
@@ -73,7 +75,7 @@ MEMORY.md          ← 越来越大，开始截断
 
 ### 步骤
 
-1. 在大象里把 `memory-knowledge-auto-migrate-hook.zip` 发给 OpenClaw
+1. 将 `memory-knowledge-auto-migrate-hook.zip` 发送给 OpenClaw
     
 2. 说："帮我安装这个 hook"
     
@@ -97,7 +99,7 @@ OpenClaw 会自动读取包内的 `INSTALL.md` 并执行安装，整个过程 30
 ---
 
 ## 二、重构后的架构全景
-<img width="4518" height="522" alt="adaptr_architecture" src="https://github.com/user-attachments/assets/a6e36c8e-4b94-4d23-9780-e16a8cc08f6c" />
+<img width="4518" height="522" alt="adaptr_architecture" src="https://github.com/user-attachments/assets/9048c11d-b57c-475a-b136-57c38c063913" />
 
 安装后，你的 `memory/` 下会多出一个隐藏目录 `.adaptr-v1/`，这是重构后的数据落地处：
 
@@ -106,7 +108,7 @@ memory/.adaptr-v1/
 ├── viking/
 │   ├── user/
 │   │   ├── memories/
-│   │   │   ├── profile.jsonl        ← 人物信息、UID、MIS
+│   │   │   ├── profile.jsonl        ← 人物信息、用户 ID、身份标识
 │   │   │   ├── preferences.jsonl    ← 行为偏好
 │   │   │   ├── events.jsonl         ← 事件记录
 │   │   │   ├── entities.jsonl       ← 实体图谱（人/物/概念）
@@ -236,10 +238,10 @@ LangMem 是工程化最完整的 Agent 长期记忆 SDK，提供可插拔 Storag
 
 |问题|学术方案|本工具方案|取舍原因|
 |---|---|---|---|
-|记忆分类|LLM 推理路由（AdaMem）|写入时规则分桶|消灭检索时 LLM 开销|
+|记忆分类|LLM 推理路由（AdaMem）|写入时规则分桶 + 低置信度 LLM 兜底（v7.2）|规则优先，LLM 仅在不确定时介入|
 |索引结构|L0/L1/L2 分层（OpenViking）|完整复用|直接适配 OpenClaw 场景|
 |去重|向量相似度（OpenViking）|OpenClaw 原生 memory search|零外部 embedding 依赖|
-|知识图谱|LLM 关系抽取（A-MEM）|规则驱动 + 谓词归一化|个人工作区规模，规则够用|
+|知识图谱|LLM 关系抽取（A-MEM）|LLM 联合抽取 + 规则补充（v7.2 起），限频 200 次/session|规则为基础，LLM 增强上限可控|
 |记忆演化|LLM 触发属性更新（A-MEM）|文件级版本替换 + TTL 老化|确定性语义，可审计|
 |自修复|无（多数方案缺失）|probe→verify→repair 闭环|OpenViking self-evolving 启发|
 
@@ -255,8 +257,8 @@ LangMem 是工程化最完整的 Agent 长期记忆 SDK，提供可插拔 Storag
 
 |桶|存什么|典型来源|
 |---|---|---|
-|`memory.profile`|姓名、UID、MIS、身份|MEMORY.md 里的用户信息段|
-|`memory.preferences`|行为偏好、沟通风格|"秋实喜欢简洁回复"这类内容|
+|`memory.profile`|姓名、用户 ID、身份|MEMORY.md 里的用户信息段|
+|`memory.preferences`|行为偏好、沟通风格|"用户喜欢简洁回复"这类内容|
 |`memory.events`|事件、里程碑、决策|日记文件|
 |`memory.agent_skill`|Agent 技能、工具配置|skills/、TOOLS.md|
 |`memory.working`|当前任务状态|SESSION-STATE.md、临时工作记录|
@@ -265,6 +267,8 @@ LangMem 是工程化最完整的 Agent 长期记忆 SDK，提供可插拔 Storag
 |`knowledge.references`|参考资料、规范|knowledge/ 下的 reference 文件|
 
 **分类是全自动的**，优先级是：路径命名 > frontmatter 标注 > 关键词打分兜底。
+
+v7.1 将 LLM 分类兜底的触发阈值从 0.70 提高到 0.80。这意味着更多"关键词打分不够确定"的记录会交由 LLM 二次分类，减少 facts/procedures/events 之间的误分类。对无 LLM 用户无影响（仍使用关键词打分结果）。
 
 ### 3.2 三层索引（L0/L1/L2）
 
@@ -279,6 +283,8 @@ L2  l2_records.jsonl     ← 全量原子记录（按需精读）
 ```
 
 `retrieval-hints.json` 是额外的检索加速层，记录热点 bucket、关键词、⚡ 标注的 flash 记录，让高频检索更快触达。
+
+v7 起 `retrieval-hints.json` 新增 `recent_events` 字段：按时间倒排的最近 15 条事件摘要（含 id、text_preview、timestamp、tags）。Agent 回答"最近发生了什么"时无需遍历全量 events 记录，直接读取此字段。
 
 ### 3.3 知识图谱构建
 
@@ -319,6 +325,10 @@ L2  l2_records.jsonl     ← 全量原子记录（按需精读）
 - 灰区（score 0.55–0.85）记录交由 LLM 裁决 duplicate / distinct，避免误删（v3 新增，不可用时回退规则）
     
 - 门控拒绝记录写入 `reports/rejected_*.jsonl`，去重裁决审计写入 `reports/dedup_audit_*.jsonl`，两者独立可审计
+    
+- v7.2 容错增强：语义去重现在容忍单次搜索失败（如网络超时），只有连续 3 次失败才会禁用。单次成功即重置计数器。报告中 `retrieval_disabled_reason` 字段会标注禁用原因（如 `search_failed_consecutively:3:timeout`）。
+    
+- v7.2 灰区去重：向量相似度在 0.55-0.85 之间的"可疑重复"记录，现在会额外调用 LLM 做语义判断（`"以下两条记忆是否描述同一件事？"`）。仅在 LLM 明确回答 "duplicate" 时才去重，降低误删风险。无 LLM 时按原有规则通过。
     
 
 **不依赖任何外部 embedding 服务，直接复用 OpenClaw 自带的 memory backend。**
@@ -366,7 +376,15 @@ L2  l2_records.jsonl     ← 全量原子记录（按需精读）
     
 - TTL/热度卫生检查
     
+- 记忆碎片化检测：同 bucket 内词重叠度 ≥ 45% 的记录被标记为合并候选，LLM 可用时自动执行合并（Probe 9）
+    
+- 偏好/画像矛盾检测：preferences/profile 中同一实体下存在矛盾记忆时，LLM 裁决后保留较新版本（Probe 10）
+    
 - 修复策略：以 L2 为准重建所有物化视图
+    
+- 报告目录卫生：自动清理旧报告文件，保留最近 20 份（v7.2 新增）
+    
+- v7.2.1 增强：图谱重建现在优先使用 LLM 联合抽取实体和关系（如 "张三→负责→搜索推荐"），规则引擎作为补充。单次 repair 中 LLM 调用次数计入全局限频。
     
 
 ---
@@ -379,7 +397,9 @@ L2  l2_records.jsonl     ← 全量原子记录（按需精读）
     
 - `ephemeral`：允许抽取，但强制路由到 `memory.working`（7d TTL，不进长期层）
     
-- `private`：不进入 L2 / 图谱 / 检索层，拦截记录写入 `reports/policy_skipped_*.jsonl`
+- `private`：不进入 L2 / 图谱 / 检索层，拦截记录写入 `reports/policy_skipped_*.jsonl`.
+    
+    v7.2 安全增强：`<private>...</private>` 标签包裹的内容在 redact 后不再保留任何预览文本（v7.1 会保留前 48 字符），彻底杜绝敏感信息泄露到 L2 记录中。
     
 
 |字段|取值示例|含义|
@@ -506,27 +526,50 @@ python ~/.openclaw/skills/openclaw-memory-knowledge/scripts/bootstrap_restructur
   --apply
 ```
 
+### 搜索结果后处理（v7.2.1 新增）
+
+`native_memory_search.py` 在调用 openclaw 原生搜索后，会自动使用 LLM 对结果做后处理：
+
+1. **过滤**：移除与查询无关的片段
+    
+2. **去重**：合并语义重复的内容
+    
+3. **摘要**：生成 200 字以内的上下文摘要
+    
+
+输出 JSON 的 `rerank` 字段包含：
+
+- `summary`：LLM 生成的上下文摘要
+    
+- `used_indices`：被采用的结果索引
+    
+- `filtered_indices`：被过滤的结果索引
+    
+- `ok`：LLM 是否成功调用（失败时返回全部原始结果）
+    
+
 ---
 
 ## 六、常见问题Q&A
 
-| Q | A |
-|---|---|
-| **为什么不用向量数据库？** | 向量数据库（如 Chroma、Milvus）能提供毫秒级的语义相似度检索，是 RAG 系统的标配。我们在设计时也评估了这个方向，最终放弃的原因有三：<br><br>**一、部署复杂性。** 向量数据库需要独立进程运行，并依赖 embedding 模型服务。在 CatClaw 这种轻量个人助手场景，引入这么重的基础设施明显杀鸡用牛刀。<br><br>**二、规模不匹配。** 向量检索的优势在数百万条记录以上的规模。个人工作区的记忆通常在数千条以内，这个规模下，结构化目录+关键词检索的组合完全够用，向量检索的边际收益接近零。<br><br>**三、可审计性丧失。** 向量搜索的结果难以解释——为什么这条记录的 cosine similarity 是 0.87，而那条是 0.83？调试和优化非常困难。本套工具的规则驱动检索路径可以被完整追踪（mem-ace-playbook 的 retrieval-log.md） |
-| **为什么分桶用 8 个，而不是更多或更少？** | 这个数字来自对 AdaMem 四层分类和 Memory Survey 五层分类的综合裁剪，可以根据需要做调整：<br><br>太少（如 3 个桶）：不同类型记忆混在一起，检索时还是需要 LLM 做二次区分<br><br>太多（如 20 个桶）：增加了用户的认知负担，分类规则也更难维护<br><br>8 个：覆盖了记忆的所有主要类型（人物/偏好/事件/技能/工作状态/知识三类），每个桶的边界清晰，分类规则可以写成确定性规则 |
-| **为什么 Persona 层要求"两次以上佐证"？** | 这是防止 Agent 过度自信写入错误信息的关键机制。<br><br>如果 Agent 从一次对话中推断"用户不喜欢表情符号"，立即写入 Persona，那么当这个推断是错误的时候，它会反复影响后续的所有对话。Persona 是高稳定性的人格特质，修改成本高，写错了危害大。<br><br>通过要求至少两次独立事件的佐证，大幅降低了单次偶发行为被误认为稳定特质的风险。 |
-| **会不会破坏我现有的 memory 文件？** | 不会。原始 `.md` 文件完全不动，`.adaptr-v1/` 是新增目录。首次全量重构（bootstrap）还会自动备份旧数据到同级目录。 |
-| **首次运行很慢，正常吗？** | 正常。首次是 `bootstrap` 全量扫描，时间取决于你的 memory 文件数量，一般 1~3 分钟。后续走 `ingest` 只处理变更文件，速度会快很多。 |
-| **看到** `**Memory Migration Warning**`**，怎么办？** | 查看 `last_status.json` 的 `summary.status` 字段确认，再看 `last_status.md` 里的 `Error code / Error detail / Hints`，按提示操作。最常见的原因是 bootstrap 事件没有携带可信工作区路径（安全跳过，不是出错）。`MEMORY_KNOWLEDGE_AUTO_MIGRATE.md` 是虚拟注入文件，磁盘上不存在，不要用全盘搜索去找它。 |
-| **会依赖 localhost embedding 服务吗？** | 不依赖。Python 侧只用标准库，检索增强去重直接调 OpenClaw 原生 `memory search`，不需要任何外部 embedding HTTP 服务。 |
-| **去重是怎么做的？可以审计吗？** | 增量入库时，新记录先走 OpenClaw `memory search`，相似度超阈值的内容被拒绝入库。每次增量运行都会生成 `reports/dedup_audit_*.jsonl`，可以直接查看哪些记录因何被拒。 |
-| **hook 是一直在跑吗？会影响性能？** | 只在 `agent:bootstrap` 触发，即你**开新会话**时跑一次。subagent session 自动跳过，不会因 subagent 频繁创建而反复执行。 |
-| **archive 里的内容还能找到吗？** | 可以。`viking/archive/records.jsonl` 保留了所有归档记录，没有删除。只是不再进入主检索索引，避免干扰日常召回。 |
-| **支持哪些文件格式？** | 支持 `.md / .txt / .log / .yaml / .yml / .json / .jsonl / .csv / .db / .sqlite`。其中 `.abstract.md` 和 `.overview.md` 会自动识别为索引文件跳过，不重复入库。 |
-| **新会话提示"另有迁移进程在运行"？** | v7 之前，如果脚本崩溃或被强制终止，会留下孤儿锁文件（`.auto_migrate.lock`），需手动删除。v7 新增了自动清理：检查锁文件中记录的 PID 是否仍存活，若进程已不在或锁超过 300 秒，自动释放。正常情况下不再需要手动干预。 |
-| **为什么有两份 scripts？** | handler.js 按 `__dirname/scripts/auto_migrate.py` 查找脚本（hook 路径），skill 系统按 `skills/openclaw-memory-knowledge/scripts/` 查找（skill 路径）。两个入口必须都存在，内容始终保持一致。 |
-| LLM 增强开了多少环节？ | v7.1 开始共 8 个 LLM 增强环节：分类兜底、语义切块、去重灰区裁决、检索后处理、写入质量门控、实体+关系联合抽取、自修复阶段的记忆合并、矛盾检测。全部为可选增强，**LLM 不可用时静默回退规则**。 |
-| 记忆会越来越多吗？ | v7 之前只做版本替换（同文件改了就更新），但不同文件描述同一件事仍会累积。v7 新增记忆合并：自修复阶段检测同 bucket 内高相似记录，LLM 合并为一条精练记忆，主动收敛碎片化。 |
+||Q|A|
+|---|---|---|
+||**为什么不用向量数据库？**|向量数据库（如 Chroma、Milvus）能提供毫秒级的语义相似度检索，是 RAG 系统的标配。我们在设计时也评估了这个方向，最终放弃的原因有三：<br><br>**一、部署复杂性。** 向量数据库需要独立进程运行，并依赖 embedding 模型服务。在 OpenClaw 这种轻量个人助手场景，引入这么重的基础设施明显杀鸡用牛刀。<br><br>**二、规模不匹配。** 向量检索的优势在数百万条记录以上的规模。个人工作区的记忆通常在数千条以内，这个规模下，结构化目录+关键词检索的组合完全够用，向量检索的边际收益接近零。<br><br>**三、可审计性丧失。** 向量搜索的结果难以解释——为什么这条记录的 cosine similarity 是 0.87，而那条是 0.83？调试和优化非常困难。本套工具的规则驱动检索路径可以被完整追踪（mem-ace-playbook 的 retrieval-log.md）|
+||**为什么分桶用 8 个，而不是更多或更少？**|这个数字来自对 AdaMem 四层分类和 Memory Survey 五层分类的综合裁剪，可以根据需要做调整：<br><br>太少（如 3 个桶）：不同类型记忆混在一起，检索时还是需要 LLM 做二次区分<br><br>太多（如 20 个桶）：增加了用户的认知负担，分类规则也更难维护<br><br>8 个：覆盖了记忆的所有主要类型（人物/偏好/事件/技能/工作状态/知识三类），每个桶的边界清晰，分类规则可以写成确定性规则|
+||**为什么 Persona 层要求"两次以上佐证"？**|这是防止 Agent 过度自信写入错误信息的关键机制。<br><br>如果 Agent 从一次对话中推断"用户不喜欢表情符号"，立即写入 Persona，那么当这个推断是错误的时候，它会反复影响后续的所有对话。Persona 是高稳定性的人格特质，修改成本高，写错了危害大。<br><br>通过要求至少两次独立事件的佐证，大幅降低了单次偶发行为被误认为稳定特质的风险。|
+||**会不会破坏我现有的 memory 文件？**|不会。原始 `.md` 文件完全不动，`.adaptr-v1/` 是新增目录。首次全量重构（bootstrap）还会自动备份旧数据到同级目录。|
+||**首次运行很慢，正常吗？**|正常。首次是 `bootstrap` 全量扫描，时间取决于你的 memory 文件数量，一般 1~3 分钟。后续走 `ingest` 只处理变更文件，速度会快很多。|
+||**看到** `**Memory Migration Warning**`**，怎么办？**|查看 `last_status.json` 的 `summary.status` 字段确认，再看 `last_status.md` 里的 `Error code / Error detail / Hints`，按提示操作。最常见的原因是 bootstrap 事件没有携带可信工作区路径（安全跳过，不是出错）。`MEMORY_KNOWLEDGE_AUTO_MIGRATE.md` 是虚拟注入文件，磁盘上不存在，不要用全盘搜索去找它。|
+||**会依赖 localhost embedding 服务吗？**|不依赖。Python 侧只用标准库，检索增强去重直接调 OpenClaw 原生 `memory search`，不需要任何外部 embedding HTTP 服务。|
+||**去重是怎么做的？可以审计吗？**|增量入库时，新记录先走 OpenClaw `memory search`，相似度超阈值的内容被拒绝入库。每次增量运行都会生成 `reports/dedup_audit_*.jsonl`，可以直接查看哪些记录因何被拒。|
+||**hook 是一直在跑吗？会影响性能？**|只在 `agent:bootstrap` 触发，即你**开新会话**时跑一次。subagent session 自动跳过，不会因 subagent 频繁创建而反复执行。|
+||**archive 里的内容还能找到吗？**|可以。`viking/archive/records.jsonl` 保留了所有归档记录，没有删除。只是不再进入主检索索引，避免干扰日常召回。|
+||**支持哪些文件格式？**|支持 `.md / .txt / .log / .yaml / .yml / .json / .jsonl / .csv / .db / .sqlite`。其中 `.abstract.md` 和 `.overview.md` 会自动识别为索引文件跳过，不重复入库。|
+||**新会话提示"另有迁移进程在运行"？**|v7 之前，如果脚本崩溃或被强制终止，会留下孤儿锁文件（`.auto_migrate.lock`），需手动删除。v7.2 已修复。检查锁文件中记录的 PID 是否仍存活，若进程已不在或锁超过 300 秒，自动释放。正常情况下不再需要手动干预。v7.1 及更早版本中需手动删除 `.auto_migrate.lock`|
+||**为什么有两份 scripts？**|handler.js 按 `__dirname/scripts/auto_migrate.py` 查找脚本（hook 路径），skill 系统按 `skills/openclaw-memory-knowledge/scripts/` 查找（skill 路径）。两个入口必须都存在，内容始终保持一致。v7.2 起打包时使用硬链接，zip 体积显著减小。|
+||**LLM 增强开了多少环节？**|v7.1 开始共 8 个 LLM 增强环节：分类兜底、语义切块、去重灰区裁决、检索后处理、写入质量门控、实体+关系联合抽取、自修复阶段的记忆合并、矛盾检测。全部为可选增强，**LLM 不可用时静默回退规则**。|
+||**记忆会越来越多吗？**|v7 之前只做版本替换（同文件改了就更新），但不同文件描述同一件事仍会累积。v7 新增记忆合并：自修复阶段检测同 bucket 内高相似记录，LLM 合并为一条精练记忆，主动收敛碎片化。|
+||**首次安装后报 ModuleNotFoundError？**|v7.2 已修复。v7.1 及更早版本中，如果 hook 的执行目录不是 `scripts/`，Python 脚本会因找不到 `mk_arch_core` 模块而失败。升级到 v7.2 即可。如果仍有问题，检查 `handler.js` 是否包含 `cwd: path.dirname(scriptPath)` 行。|
 
 ---
 
@@ -573,34 +616,50 @@ memory-knowledge-auto-migrate-hook-v7.zip
                 └── retrieval-protocol.md     # 检索协议说明（v5 新增）
 ```
 
-> **为什么有两份 scripts？** handler.js 按 `__dirname/scripts/auto_migrate.py` 查找脚本（hook 路径），skill 系统按 `skills/openclaw-memory-knowledge/scripts/` 查找（skill 路径）。两个入口必须都存在，内容始终保持一致。
-
 ## 九、LLM 增强（可选）
 
 v3.0 起，工具内置了基于 OpenClaw 的 LLM 增强能力（`llm_backend.py`）。安装后无需额外配置，自动从 `~/.openclaw/agents/main/agent/models.json` 发现 OpenClaw 配置。
 
-> **v7 重要修复**：v3–v6.1 存在一个 P1 级 bug——hook 自动模式下，`_get_llm()` 始终返回 NoopLLMBackend，导致下面五个增强环节在自动运行时**全部不生效**，只有手动执行脚本才能触发。v7 修复了该问题：每个子进程首次调用 `_get_llm()` 时自动从 `llm_backend` 模块发现并初始化 OpenClawLLMBackend，五个增强环节现在在 hook 自动模式下正常工作。
+**v7.0 重要修复**：v3–v6.1 存在一个 P1 级 bug——hook 自动模式下，`_get_llm()` 始终返回 NoopLLMBackend，导致下面五个增强环节在自动运行时**全部不生效**，只有手动执行脚本才能触发。v7 修复了该问题：每个子进程首次调用 `_get_llm()` 时自动从 `llm_backend` 模块发现并初始化 OpenclawLLMBackend，五个增强环节现在在 hook 自动模式下正常工作。
 
-### 五个增强环节
+**v7.2 源码同步修复**：v7.1 的 LLM 增强代码仅存在于 dist 包中，源码仓库缺失，导致从源码重新打包后五个增强环节静默失效。v7.2 已将所有 LLM 集成代码回合到源码，`package_hook.sh` 打包结果与源码完全一致。
+
+### 增强环节
 
 |环节|触发条件|效果|
 |---|---|---|
 |分类兜底|规则 confidence < 0.7|语义分类取代关键词猜测，避免"秋实喜欢深夜写代码"被分到 working|
+|实体+关系联合抽取|文本 ≥ 60 字且 LLM 可用|用 LLM 一次性抽取命名实体（人名/工具名/系统名/项目名）和关系三元组，替代规则 regex 抽取。规则抽取作为补充合并。显著提升知识图谱节点和边的质量|
 |语义切块|无标题结构 + 文本 > 100 字|无结构流水账按语义边界切成独立记忆单元，不机械按段落切|
 |去重灰区裁决|相似度 score 在 0.55–0.85|模型判断 duplicate/distinct，避免"相似但不同"被误删|
 |检索后处理|每次 memory search 返回结果后|过滤不相关片段 + 合并语义重复 + 生成摘要，喂给 Agent 的是整理好的上下文|
 |写入质量门控|文本 50–200 字且规则未拒绝|模型判断是否值得长期存储，过滤系统日志、无意义输出|
+|记忆合并（self-evolve）|同 bucket 内发现高相似碎片化记录|自修复阶段，LLM 将多条相关记忆合并为一条精练记忆，降低碎片化程度。无 LLM 时仅报告不合并|
+|偏好/画像矛盾检测（self-evolve）|preferences/profile bucket 存在中等相似度记忆对|LLM 判断两条记忆是否矛盾（同一事物、结论相反），确认矛盾后自动保留较新记录、移除较旧记录。无 LLM 时用启发式规则|
 
 ### 降级保证
 
 LLM 不可用时（models.json 未发现 / 网络超时 / API 报错），所有环节静默回退到规则逻辑。功能完整，质量降级。`stderr` 会输出提示：`LLM backend 未配置，已回退规则模式`。
 
-### 环境变量覆盖（非美团内部用户）
+### 调用限频（v7.2 新增）
+
+单次 session（即一次 bootstrap 或 ingest 运行）中，LLM 最多被调用 200 次。超限后所有增强环节静默回退到规则模式，不影响功能完整性。这意味着：
+
+- 小规模工作区（< 50 个文件）：所有记录都能享受 LLM 增强
+    
+- 大规模工作区（> 200 个文件）：前部分记录走 LLM，后部分自动降级为规则
+    
+
+如需调整上限，可在脚本中调用 `mk_arch_core.set_llm_call_limit(N)`。
+
+报告中 `llm_backend` 字段标注了本次运行使用的后端（`openclaw` 或 `noop`），可据此判断 LLM 是否生效。
+
+### 环境变量覆盖
 
 ```
-export OpenClaw_LLM_BASE_URL="https://your-endpoint/v1"
-export OpenClaw_LLM_API_KEY="your-key"
-export OpenClaw_LLM_MODEL="your-model"
+export CATCLAW_LLM_BASE_URL="https://your-endpoint/v1"
+export CATCLAW_LLM_API_KEY="your-key"
+export CATCLAW_LLM_MODEL="your-model"
 ```
 
 ## 附：版本历史
@@ -611,7 +670,8 @@ export OpenClaw_LLM_MODEL="your-model"
 |v2.0|2026-03-25|增量 UPDATE 语义版本替换、去重审计日志、TTL/热度归档、关系图谱质量增强（谓词归一化、relation_decisions、弱关系自修复）、workspace 自动发现安全加固|
 |v3.0|2026-03-27|LLM 增强能力（llm_backend.py）：零 pip 依赖，自动从 models.json 发现 OpenClaw 配置；五个增强环节（分类兜底、语义切块、去重灰区裁决、检索后处理、写入质量门控）；降级保证（LLM 不可用时全链路回退规则）|
 |v4.0|2026-03-28|rerank 接入 native_memory_search.py：检索后处理（过滤不相关 + 合并重复 + 生成摘要）挂入主检索调用链；auto_migrate.py summary 新增 llm_backend 字段|
-|v5.0|2026-03-29|① SKILL.md Hook 自动模式加 ⚠️ 不要手动跑脚本说明；② SKILL.md 新增「检索结果使用规则」（rerank.ok==true 时优先用 rerank.summary）；③ auto_migrate.py summary 新增 duration_seconds + processed_files；④ INSTALL.md 安装验证扩充为 4 步；⑤ llm_backend.py 清空内网 default_base_url，未配置时立即打 stderr 降级提示；⑥ P0 治理字段（memory_function/formation_mode/trust_tier/memory_policy）；⑦ Progressive Disclosure 检索协议 + profile_snapshot/preferences_snapshot 快照层|
+|v5.0|2026-03-29|① SKILL.md Hook 自动模式加 ⚠️ 不要手动跑脚本说明；② SKILL.md 新增「检索结果使用规则」（rerank.ok==true 时优先用 rerank.summary）；③ auto_migrate.py summary 新增 duration_seconds + processed_files；④ INSTALL.md 安装验证扩充为 4 步；⑤ llm_backend.py 清空 default_base_url，未配置时立即打 stderr 降级提示；⑥ P0 治理字段（memory_function/formation_mode/trust_tier/memory_policy）；⑦ Progressive Disclosure 检索协议 + profile_snapshot/preferences_snapshot 快照层|
 |v6.0|2026-03-31|① handler.js 新增 persistLastStatus()：每次 bootstrap 无论客户端是否支持注入，均落盘 last_status.md（人读）+ last_status.json（机器读）；② handler.js 加 bootstrapFiles = [] 兜底；③ processed_files 按运行模式区分；④ 全部文档改为以 last_status.json.summary.target_root 为准|
 |v6.1|2026-04-01|① handler.js getOpenclawHome() 路径偏移修复：当 OPENCLAW_HOME 指向 HOME 目录（如 /root）且 HOME/.openclaw 存在时，优先使用 HOME/.openclaw，修复 skill sync 装到 /root/skills/ 而非 ~/.openclaw/skills/ 的问题；② INSTALL.md Step 3/5 路径写死修复：改为动态 Python 定位脚本，探测候选路径列表，不再写死 ~/.openclaw/skills/；③ INSTALL.md 新增 skill sync 路径偏移排查指引：SKILL_DIR=NOT_FOUND 时说明如何检查 $OPENCLAW_HOME、建议升级 v6.1+、提供临时绕过 find 命令；④ 便捷安装方式改用 $SKILL_DIR 变量|
-|v7.0|2026-04-03|**LLM 链路修复（P1）**：① mk_arch_core.`_get_llm()` / incremental_ingest.`_get_ingest_llm()` 改为懒加载自动发现——每个子进程首次调用时独立初始化 OpenClawLLMBackend，修复 v3–v6.1 hook 自动模式下五个 LLM 增强环节实际全部不生效的问题；② bootstrap_restructure / incremental_ingest 的 report 新增 `llm_backend` 字段，auto_migrate.py 优先采信子进程报告的实际 backend（不再依赖父进程检测），summary 中 `llm_backend` 字段现在可信；**稳定性**：③ auto_migrate.py 新增 `_is_stale_lock()`：PID 存活检查 + 300s mtime 超时双重判断，自动清理崩溃遗留孤儿锁，不再需要手动删 `.auto_migrate.lock`；④ handler.js `targetRoot` fallback 改为检查 `summary.target_root` 实际存在性，fallback 时优先探测 `memory/` 子目录决定 `.adaptr-v1` 位置；**性能 & 清理**：⑤ `should_reingest` 新增 mtime+size 快速路径，未变化时跳过 SHA256 全文读取（大文件友好）；⑥ write_jsonl 修复空列表语义：`append=False` 时正确清空文件而非静默跳过；⑦ 删除 16 个 `semantic_*` 重复统计字段、冗余 `import json as _json`、内联 `__import__('time')` 替换为标准 import|
+|v7.0|2026-04-03|**LLM 链路修复**：① mkarch_core.`_get_llm()` / incremental_ingest.`_get_ingest_llm()` 改为懒加载自动发现——每个子进程首次调用时独立初始化 OpenclawLLMBackend，修复 v3–v6.1 hook 自动模式下五个 LLM 增强环节实际不生效的问题；② bootstrap_restructure / incremental_ingest 的 report 新增 `llm_backend` 字段，auto_migrate.py 优先采信子进程报告的实际 backend（不再依赖父进程检测），summary 中 `llm_backend` 字段现在可信；<br><br>**稳定性**：③ auto_migrate.py 新增 `_is_stale_lock()`：PID 存活检查 + 300s mtime 超时双重判断，自动清理崩溃遗留孤儿锁，不再需要手动删 `.auto_migrate.lock`；④ handler.js `targetRoot` fallback 改为检查 `summary.target_root` 实际存在性，fallback 时优先探测 `memory/` 子目录决定 `.adaptr-v1` 位置；<br><br>**性能 & 清理**：⑤ `should_reingest` 新增 mtime+size 快速路径，未变化时跳过 SHA256 全文读取（大文件友好）；⑥ write_jsonl 修复空列表语义：`append=False` 时正确清空文件而非静默跳过；⑦ 删除 16 个 `semantic*`重复统计字段、冗余`import json as _json`、内联` **import**('time')` 替换为标准 import|
+|v7.1|2026-04-03|LLM 深度利用：① 新增实体+关系 LLM 联合抽取（`_llm_extract_entities_and_relations()`），替代纯 regex 抽取，规则结果作为补充合并；② 分类 LLM 兜底阈值从 0.70 提至 0.80；③ self_evolve 新增 Probe 9 记忆碎片化检测 + LLM 自动合并，Probe 10 偏好/画像矛盾检测 + LLM 裁决/自动保留新值；④ retrieval-hints.json 新增 `recent_events`时序索引|
