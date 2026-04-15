@@ -1,6 +1,8 @@
-# OpenClaw Memory & Knowledge Restructuring Toolkit
+<p align="center">
+  <a href="./README.md">[中文]</a> | <strong>[English]</strong>
+</p>
 
-[English](README.en.md) | [简体中文](README.md)
+# OpenClaw Memory & Knowledge Restructuring Toolkit
 
 ## Before You Start: Do You Have This Problem?
 

@@ -1,3 +1,7 @@
+<p align="center">
+  <strong>[中文]</strong> | <a href="./README.en.md">[English]</a>
+</p>
+
 # OpenClaw Memory & Knowledge 架构重构工具使用指南
 
 
